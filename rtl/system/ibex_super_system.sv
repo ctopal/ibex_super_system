@@ -6,7 +6,9 @@ module ibex_super_system #(
   input logic                 rst_sys_ni,
 
   output logic [GpoWidth-1:0] gp_o,
-  output logic                uart_tx_o
+  output logic                uart_tx_o,
+  output logic                spi_tx_o,
+  output logic                spi_sck_o
 );
   parameter logic [31:0] MEM_SIZE     = 64 * 1024; // 64 kB
   parameter logic [31:0] MEM_START    = 32'h00100000;
@@ -28,6 +30,10 @@ module ibex_super_system #(
   parameter logic [31:0] TIMER_START   = 32'h80002000;
   parameter logic [31:0] TIMER_MASK    = ~(TIMER_SIZE-1);
 
+  parameter logic [31:0] SPI_SIZE    = 1 * 1024; // 1kB
+  parameter logic [31:0] SPI_START   = 32'h80003000;
+  parameter logic [31:0] SPI_MASK    = ~(SPI_SIZE-1);
+
   // debug functionality is optional
   localparam bit DBG = 1;
   localparam int unsigned DbgHwBreakNum = (DBG == 1) ? 2 : 0;
@@ -43,11 +49,12 @@ module ibex_super_system #(
     Gpio,
     Uart,
     Timer,
-    DbgDev
+    DbgDev,
+    Spi
   } bus_device_e;
 
-  localparam int NrDevices = DBG ? 5 : 4;
-  localparam int NrHosts = DBG ? 2 : 1;
+  localparam int NrDevices = DBG ? 6 : 5;
+  localparam int NrHosts = DBG ? 3 : 2;
 
   // interrupts
   logic timer_irq;
@@ -110,6 +117,8 @@ module ibex_super_system #(
   assign cfg_device_addr_mask[Uart]   = UART_MASK;
   assign cfg_device_addr_base[Timer]  = TIMER_START;
   assign cfg_device_addr_mask[Timer]  = TIMER_MASK;
+  assign cfg_device_addr_base[Spi]    = SPI_START;
+  assign cfg_device_addr_mask[Spi]    = SPI_MASK;
 
   if (DBG) begin : g_dbg_device_cfg
     assign cfg_device_addr_base[DbgDev] = DEBUG_START;
@@ -121,6 +130,7 @@ module ibex_super_system #(
   assign device_err[Ram] = 1'b0;
   assign device_err[Gpio] = 1'b0;
   assign device_err[Uart] = 1'b0;
+  assign device_err[Spi] = 1'b0;
 
   bus #(
     .NrDevices    ( NrDevices ),
@@ -283,6 +293,41 @@ module ibex_super_system #(
     .device_rdata_o (device_rdata[Uart]),
 
     .uart_tx_o
+  );
+
+  // 50Mhz sys clock divided into 1.56MHz SPI clock
+  logic clk_spi;
+  prim_clock_div #(
+    .Divisor(32)
+  ) u_spi_div (
+    .clk_i           (clk_sys_i),
+    .rst_ni          (1'b1),
+    .step_down_req_i ('0),
+    .step_down_ack_o (),
+    .test_en_i       ('0),
+    .clk_o           (clk_spi)
+  );
+
+  spi_top #(
+    .CPOL(0),
+    .CPHA(0)
+  ) u_spi (
+    .clk_i (clk_spi),
+    .rst_ni(rst_sys_ni),
+
+    .device_req_i   (device_req[Spi]),
+    .device_addr_i  (device_addr[Spi]),
+    .device_we_i    (device_we[Spi]),
+    .device_be_i    (device_be[Spi]),
+    .device_wdata_i (device_wdata[Spi]),
+    .device_rvalid_o(device_rvalid[Spi]),
+    .device_rdata_o (device_rdata[Spi]),
+
+    .spi_tx_o(spi_tx_o), // mosi pin
+    .sck_o(spi_sck_o), // serial clock pin
+
+    .byte_data_o(), // unused
+    .busy_o() // unused
   );
 
   timer #(
